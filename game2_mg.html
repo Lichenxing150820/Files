@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>迷宫探索者 - 优化操控</title>
+    <style>
+        :root {
+            --bg: #1a1a2e;
+            --panel-bg: #16213e;
+            --text: #e0e0e0;
+            --accent: #e94560;
+            --wall: #4e4e8a;
+            --path: #2a2a4a;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body {
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        .game-wrapper {
+            display: flex;
+            gap: 25px;
+            align-items: flex-start;
+            padding: 20px;
+        }
+        canvas {
+            border: 2px solid var(--accent);
+            border-radius: 8px;
+            box-shadow: 0 0 20px rgba(233,69,96,0.4);
+            background: #0f0f23;
+        }
+        .info-panel {
+            background: var(--panel-bg);
+            padding: 20px;
+            border-radius: 12px;
+            color: var(--text);
+            min-width: 180px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .info-panel h3 { font-size:20px; border-bottom:2px solid var(--accent); padding-bottom:8px; color: var(--accent); }
+        .stats { display:flex; flex-direction:column; gap:8px; font-size:16px; }
+        .stat-item { display:flex; justify-content:space-between; align-items:center; }
+        .stat-value { color:var(--accent); font-weight:bold; font-size:18px; }
+        .controls { margin-top:10px; font-size:14px; line-height:1.8; color:#aaa; }
+        .controls span { color:var(--accent); font-weight:bold; }
+        .btn {
+            background: var(--accent); border:none; color:white; padding:10px 16px; border-radius:6px;
+            cursor:pointer; font-weight:bold; transition:background 0.2s; margin-top:5px; font-size:14px;
+        }
+        .btn:hover { background:#ff6b81; }
+        .toggle-group { display:flex; align-items:center; justify-content:space-between; margin-top:5px; }
+        .toggle-group label { font-size:15px; color:#ddd; }
+        input[type="checkbox"] { width:18px; height:18px; accent-color:var(--accent); }
+        @media (max-width:700px) {
+            .game-wrapper { flex-direction:column; align-items:center; gap:15px; }
+            .info-panel { flex-direction:row; flex-wrap:wrap; justify-content:center; gap:10px; width:100%; max-width:450px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="game-wrapper">
+        <canvas id="mazeCanvas"></canvas>
+        <div class="info-panel">
+            <h3>迷宫探索者</h3>
+            <div class="stats">
+                <div class="stat-item"><span>⏱️ 时间</span><span class="stat-value" id="timerDisplay">00:00</span></div>
+                <div class="stat-item"><span>👣 步数</span><span class="stat-value" id="stepsDisplay">0</span></div>
+                <div class="stat-item"><span>🏆 最佳</span><span class="stat-value" id="bestDisplay">--</span></div>
+            </div>
+            <div class="toggle-group">
+                <label for="fogToggle">🌫️ 迷雾模式</label>
+                <input type="checkbox" id="fogToggle" checked>
+            </div>
+            <div class="toggle-group">
+                <label for="pathToggle">🧭 显示路径 (B键)</label>
+                <input type="checkbox" id="pathToggle">
+            </div>
+            <div class="controls">
+                <span>↑ ↓ ← →</span> 移动<br>
+                <span>按住可连走</span><br>
+                <span>对角同时按</span> 斜走<br>
+                <span>B</span> 自动寻路<br>
+                <span>N</span> 新迷宫<br>
+                <span>R</span> 回起点
+            </div>
+            <button class="btn" onclick="newMaze()">🔄 生成新迷宫</button>
+            <button class="btn" onclick="resetPlayer()">📍 回到起点</button>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('mazeCanvas');
+            const ctx = canvas.getContext('2d');
+
+            const ROWS = 15;
+            const COLS = 15;
+            const CELL_SIZE = 30;
+            canvas.width = COLS * CELL_SIZE + 20;
+            canvas.height = ROWS * CELL_SIZE + 20;
+            const OFFSET = 10;
+
+            const DIRS = {
+                top:    { row: -1, col: 0, wall: 'top', opposite: 'bottom' },
+                right:  { row: 0,  col: 1, wall: 'right', opposite: 'left' },
+                bottom: { row: 1,  col: 0, wall: 'bottom', opposite: 'top' },
+                left:   { row: 0,  col: -1, wall: 'left', opposite: 'right' }
+            };
+
+            // 游戏状态
+            let grid = [];
+            let player = { row: 0, col: 0 };
+            let exit = { row: ROWS-1, col: COLS-1 };
+            let steps = 0;
+            let timerSeconds = 0;
+            let timerInterval = null;
+            let gameCompleted = false;
+            let showPath = false;
+            let fogEnabled = true;
+            let bestScore = localStorage.getItem('mazeBestSteps') || null;
+            let pathSolution = [];
+
+            // 操控优化：按键状态与连续移动
+            const keys = {};                         // 当前按下的键
+            let lastMoveTime = 0;
+            const MOVE_DELAY = 100;                  // 移动间隔（ms），控制连走速度
+            let animFrameId = null;
+
+            const timerDisplay = document.getElementById('timerDisplay');
+            const stepsDisplay = document.getElementById('stepsDisplay');
+            const bestDisplay = document.getElementById('bestDisplay');
+            const fogToggle = document.getElementById('fogToggle');
+            const pathToggle = document.getElementById('pathToggle');
+
+            bestDisplay.textContent = bestScore ? bestScore + ' 步' : '--';
+
+            // ---------- 迷宫生成 ----------
+            function generateMaze() {
+                grid = Array.from({ length: ROWS }, () =>
+                    Array.from({ length: COLS }, () => ({
+                        top: true, right: true, bottom: true, left: true,
+                        visited: false
+                    }))
+                );
+
+                function shuffle(arr) {
+                    for (let i = arr.length - 1; i > 0; i--) {
+                        const j = Math.floor(Math.random() * (i + 1));
+                        [arr[i], arr[j]] = [arr[j], arr[i]];
+                    }
+                    return arr;
+                }
+
+                function carve(row, col) {
+                    grid[row][col].visited = true;
+                    const directions = shuffle(['top', 'right', 'bottom', 'left']);
+                    for (const dir of directions) {
+                        const d = DIRS[dir];
+                        const nr = row + d.row;
+                        const nc = col + d.col;
+                        if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS && !grid[nr][nc].visited) {
+                            grid[row][col][dir] = false;
+                            grid[nr][nc][d.opposite] = false;
+                            carve(nr, nc);
+                        }
+                    }
+                }
+                carve(0, 0);
+                grid[exit.row][exit.col].bottom = false;
+                grid[0][0].top = false;
+            }
+
+            // ---------- 玩家移动基础函数 ----------
+            function canMoveDirection(dir) {
+                const d = DIRS[dir];
+                const nr = player.row + d.row;
+                const nc = player.col + d.col;
+                if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) return false;
+                return !grid[player.row][player.col][dir];
+            }
+
+            function moveDirection(dir) {
+                const d = DIRS[dir];
+                player.row += d.row;
+                player.col += d.col;
+            }
+
+            // 单方向移动（带步数增加和终点检测）
+            function tryMove(dir) {
+                if (canMoveDirection(dir)) {
+                    moveDirection(dir);
+                    steps++;
+                    updateSteps();
+                    if (player.row === exit.row && player.col === exit.col) {
+                        finishGame();
+                    }
+                    lastMoveTime = performance.now();
+                    return true;
+                }
+                return false;
+            }
+
+            // 对角线移动尝试（组合两个方向）
+            function tryDiagonal(dir1, dir2) {
+                // 尝试路径1：先 dir1 后 dir2
+                if (canMoveDirection(dir1)) {
+                    // 模拟移动
+                    const prevRow = player.row, prevCol = player.col;
+                    moveDirection(dir1);
+                    if (canMoveDirection(dir2)) {
+                        // 成功：已经移动了dir1，再移动dir2
+                        moveDirection(dir2);
+                        steps++;
+                        updateSteps();
+                        if (player.row === exit.row && player.col === exit.col) finishGame();
+                        lastMoveTime = performance.now();
+                        return true;
+                    } else {
+                        // 恢复
+                        player.row = prevRow;
+                        player.col = prevCol;
+                    }
+                }
+                // 尝试路径2：先 dir2 后 dir1
+                if (canMoveDirection(dir2)) {
+                    const prevRow = player.row, prevCol = player.col;
+                    moveDirection(dir2);
+                    if (canMoveDirection(dir1)) {
+                        moveDirection(dir1);
+                        steps++;
+                        updateSteps();
+                        if (player.row === exit.row && player.col === exit.col) finishGame();
+                        lastMoveTime = performance.now();
+                        return true;
+                    } else {
+                        player.row = prevRow;
+                        player.col = prevCol;
+                    }
+                }
+                return false;
+            }
+
+            // 从 keys 提取当前按下方向
+            function getPressedDirs() {
+                const dirs = [];
+                if (keys['ArrowUp'])    dirs.push('top');
+                if (keys['ArrowDown'])  dirs.push('bottom');
+                if (keys['ArrowLeft'])  dirs.push('left');
+                if (keys['ArrowRight']) dirs.push('right');
+                return dirs;
+            }
+
+            // 判断是否相对方向（相反）
+            function areOpposite(dir1, dir2) {
+                return (dir1 === 'top' && dir2 === 'bottom') ||
+                       (dir1 === 'bottom' && dir2 === 'top') ||
+                       (dir1 === 'left' && dir2 === 'right') ||
+                       (dir1 === 'right' && dir2 === 'left');
+            }
+
+            // 获取组合方向的对角移动参数
+            function getDiagonalCombo(dir1, dir2) {
+                const combo = [dir1, dir2].sort().join('');
+                switch(combo) {
+                    case 'righttop':    return { d1: 'right', d2: 'top' };
+                    case 'rightbottom': return { d1: 'right', d2: 'bottom' };
+                    case 'lefttop':     return { d1: 'left', d2: 'top' };
+                    case 'leftbottom':  return { d1: 'left', d2: 'bottom' };
+                    default: return null;
+                }
+            }
+
+            // 更新函数：在循环中调用，处理按键移动
+            function update() {
+                if (gameCompleted) return;
+                const now = performance.now();
+                if (now - lastMoveTime < MOVE_DELAY) return;
+
+                const pressed = getPressedDirs();
+                if (pressed.length === 0) return;
+
+                // 只有一个方向
+                if (pressed.length === 1) {
+                    tryMove(pressed[0]);
+                }
+                // 两个方向
+                else if (pressed.length === 2) {
+                    const [dir1, dir2] = pressed;
+                    // 相反方向不移动
+                    if (areOpposite(dir1, dir2)) return;
+
+                    const combo = getDiagonalCombo(dir1, dir2);
+                    if (combo) {
+                        const success = tryDiagonal(combo.d1, combo.d2);
+                        if (!success) {
+                            // 对角不可行，尝试单独方向（按优先级：上、下、左、右）
+                            const priority = ['top', 'bottom', 'left', 'right'];
+                            for (const d of priority) {
+                                if (pressed.includes(d) && tryMove(d)) break;
+                            }
+                        }
+                    }
+                }
+                // 多于两个方向（极少情况），只执行第一个
+                else {
+                    const priority = ['top', 'bottom', 'left', 'right'];
+                    for (const d of priority) {
+                        if (pressed.includes(d) && tryMove(d)) break;
+                    }
+                }
+            }
+
+            // ---------- 寻路 BFS ----------
+            function computeSolution() {
+                if (gameCompleted) { pathSolution = []; return; }
+                const queue = [{ row: player.row, col: player.col, path: [] }];
+                const visited = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+                visited[player.row][player.col] = true;
+                while (queue.length > 0) {
+                    const { row, col, path } = queue.shift();
+                    if (row === exit.row && col === exit.col) {
+                        pathSolution = path.concat({ row, col });
+                        return;
+                    }
+                    for (const dir of Object.keys(DIRS)) {
+                        const d = DIRS[dir];
+                        const nr = row + d.row;
+                        const nc = col + d.col;
+                        if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS &&
+                            !visited[nr][nc] && !grid[row][col][dir]) {
+                            visited[nr][nc] = true;
+                            queue.push({ row: nr, col: nc, path: path.concat({ row, col }) });
+                        }
+                    }
+                }
+                pathSolution = [];
+            }
+
+            // ---------- 绘制 ----------
+            function draw() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                // 背景
+                for (let r = 0; r < ROWS; r++) {
+                    for (let c = 0; c < COLS; c++) {
+                        ctx.fillStyle = '#12122a';
+                        ctx.fillRect(OFFSET + c*CELL_SIZE, OFFSET + r*CELL_SIZE, CELL_SIZE, CELL_SIZE);
+                    }
+                }
+                // 墙体
+                ctx.strokeStyle = '#4e4e8a';
+                ctx.lineWidth = 2;
+                for (let r = 0; r < ROWS; r++) {
+                    for (let c = 0; c < COLS; c++) {
+                        const x = OFFSET + c*CELL_SIZE;
+                        const y = OFFSET + r*CELL_SIZE;
+                        const cell = grid[r][c];
+                        if (cell.top)    drawLine(x, y, x+CELL_SIZE, y);
+                        if (cell.right)  drawLine(x+CELL_SIZE, y, x+CELL_SIZE, y+CELL_SIZE);
+                        if (cell.bottom) drawLine(x, y+CELL_SIZE, x+CELL_SIZE, y+CELL_SIZE);
+                        if (cell.left)   drawLine(x, y, x, y+CELL_SIZE);
+                    }
+                }
+                // 终点
+                const exitX = OFFSET + exit.col*CELL_SIZE + CELL_SIZE/2;
+                const exitY = OFFSET + exit.row*CELL_SIZE + CELL_SIZE/2;
+                ctx.fillStyle = '#4ade80';
+                ctx.beginPath();
+                ctx.arc(exitX, exitY, CELL_SIZE*0.3, 0, Math.PI*2);
+                ctx.fill();
+                ctx.fillStyle = '#22c55e';
+                ctx.beginPath();
+                ctx.arc(exitX, exitY, CELL_SIZE*0.18, 0, Math.PI*2);
+                ctx.fill();
+
+                // 路径
+                if (showPath && pathSolution.length > 0) {
+                    ctx.strokeStyle = 'rgba(233,69,96,0.7)';
+                    ctx.lineWidth = 3;
+                    ctx.setLineDash([6,4]);
+                    ctx.beginPath();
+                    const sx = OFFSET + player.col*CELL_SIZE + CELL_SIZE/2;
+                    const sy = OFFSET + player.row*CELL_SIZE + CELL_SIZE/2;
+                    ctx.moveTo(sx, sy);
+                    for (const p of pathSolution) {
+                        ctx.lineTo(OFFSET + p.col*CELL_SIZE + CELL_SIZE/2, OFFSET + p.row*CELL_SIZE + CELL_SIZE/2);
+                    }
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+
+                // 迷雾
+                if (fogEnabled && !gameCompleted) {
+                    ctx.fillStyle = 'rgba(10,10,30,0.85)';
+                    ctx.fillRect(0,0,canvas.width,canvas.height);
+                    for (let r = Math.max(0,player.row-2); r <= Math.min(ROWS-1,player.row+2); r++) {
+                        for (let c = Math.max(0,player.col-2); c <= Math.min(COLS-1,player.col+2); c++) {
+                            const dist = Math.abs(r-player.row) + Math.abs(c-player.col);
+                            if (dist <= 2) {
+                                const x = OFFSET + c*CELL_SIZE;
+                                const y = OFFSET + r*CELL_SIZE;
+                                ctx.clearRect(x-1, y-1, CELL_SIZE+2, CELL_SIZE+2);
+                                ctx.strokeStyle = '#4e4e8a';
+                                ctx.lineWidth = 2;
+                                const cell = grid[r][c];
+                                if (cell.top)    drawLine(x,y,x+CELL_SIZE,y);
+                                if (cell.right)  drawLine(x+CELL_SIZE,y,x+CELL_SIZE,y+CELL_SIZE);
+                                if (cell.bottom) drawLine(x,y+CELL_SIZE,x+CELL_SIZE,y+CELL_SIZE);
+                                if (cell.left)   drawLine(x,y,x,y+CELL_SIZE);
+                            }
+                        }
+                    }
+                    ctx.fillStyle = '#4ade80';
+                    ctx.beginPath();
+                    ctx.arc(exitX, exitY, CELL_SIZE*0.3, 0, Math.PI*2);
+                    ctx.fill();
+                    ctx.fillStyle = '#22c55e';
+                    ctx.beginPath();
+                    ctx.arc(exitX, exitY, CELL_SIZE*0.18, 0, Math.PI*2);
+                    ctx.fill();
+                }
+
+                // 玩家
+                const px = OFFSET + player.col*CELL_SIZE + CELL_SIZE/2;
+                const py = OFFSET + player.row*CELL_SIZE + CELL_SIZE/2;
+                ctx.fillStyle = '#facc15';
+                ctx.shadowColor = '#fbbf24';
+                ctx.shadowBlur = 8;
+                ctx.beginPath();
+                ctx.arc(px, py, CELL_SIZE*0.3, 0, Math.PI*2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                if (gameCompleted) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                    ctx.fillRect(0,0,canvas.width,canvas.height);
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 24px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🎉 迷宫突破！', canvas.width/2, canvas.height/2-10);
+                    ctx.font = '16px Arial';
+                    ctx.fillText('按 N 生成新迷宫', canvas.width/2, canvas.height/2+30);
+                }
+            }
+
+            function drawLine(x1,y1,x2,y2) {
+                ctx.beginPath();
+                ctx.moveTo(x1,y1);
+                ctx.lineTo(x2,y2);
+                ctx.stroke();
+            }
+
+            // ---------- 游戏循环 ----------
+            function gameLoop(timestamp) {
+                update();
+                draw();
+                animFrameId = requestAnimationFrame(gameLoop);
+            }
+
+            function startLoop() {
+                if (animFrameId) cancelAnimationFrame(animFrameId);
+                animFrameId = requestAnimationFrame(gameLoop);
+            }
+
+            // ---------- 其他控制 ----------
+            function finishGame() {
+                gameCompleted = true;
+                clearInterval(timerInterval);
+                if (!bestScore || steps < parseInt(bestScore)) {
+                    bestScore = steps;
+                    localStorage.setItem('mazeBestSteps', steps);
+                    bestDisplay.textContent = steps + ' 步';
+                }
+            }
+
+            function newMaze() {
+                generateMaze();
+                player = { row:0, col:0 };
+                steps = 0;
+                gameCompleted = false;
+                showPath = false;
+                pathToggle.checked = false;
+                pathSolution = [];
+                updateSteps();
+                clearInterval(timerInterval);
+                timerSeconds = 0;
+                timerDisplay.textContent = '00:00';
+                startTimer();
+                // 清除按键状态
+                for (let k in keys) keys[k] = false;
+                lastMoveTime = performance.now();
+                startLoop();
+            }
+
+            function resetPlayer() {
+                if (gameCompleted) {
+                    // 如果已完成，重置状态
+                    gameCompleted = false;
+                    clearInterval(timerInterval);
+                    timerSeconds = 0;
+                    timerDisplay.textContent = '00:00';
+                    startTimer();
+                }
+                player = { row:0, col:0 };
+                steps = 0;
+                updateSteps();
+                if (showPath) computeSolution();
+                for (let k in keys) keys[k] = false;
+                lastMoveTime = performance.now();
+            }
+
+            function startTimer() {
+                if (timerInterval) clearInterval(timerInterval);
+                timerInterval = setInterval(() => {
+                    if (!gameCompleted) {
+                        timerSeconds++;
+                        timerDisplay.textContent = formatTime(timerSeconds);
+                    }
+                }, 1000);
+            }
+
+            function formatTime(sec) {
+                const m = Math.floor(sec/60).toString().padStart(2,'0');
+                const s = (sec%60).toString().padStart(2,'0');
+                return `${m}:${s}`;
+            }
+
+            function updateSteps() {
+                stepsDisplay.textContent = steps;
+            }
+
+            // ---------- 事件绑定 ----------
+            window.addEventListener('keydown', (e) => {
+                // 方向键设置状态
+                if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) {
+                    e.preventDefault();
+                    if (e.repeat) return;   // 忽略浏览器重复事件，由我们自己的计时器控制
+                    keys[e.key] = true;
+                    // 首次按下立即移动（冷却重置）
+                    lastMoveTime = 0;
+                    return;
+                }
+                // 功能键
+                if (e.key === 'b' || e.key === 'B') {
+                    e.preventDefault();
+                    showPath = !showPath;
+                    pathToggle.checked = showPath;
+                    if (showPath) computeSolution();
+                    else pathSolution = [];
+                } else if (e.key === 'n' || e.key === 'N') {
+                    e.preventDefault();
+                    newMaze();
+                } else if (e.key === 'r' || e.key === 'R') {
+                    e.preventDefault();
+                    resetPlayer();
+                }
+            });
+
+            window.addEventListener('keyup', (e) => {
+                if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) {
+                    e.preventDefault();
+                    keys[e.key] = false;
+                }
+            });
+
+            // 窗口失去焦点时清除所有按键（防止卡方向）
+            window.addEventListener('blur', () => {
+                for (let k in keys) keys[k] = false;
+            });
+
+            fogToggle.addEventListener('change', (e) => {
+                fogEnabled = e.target.checked;
+            });
+            pathToggle.addEventListener('change', (e) => {
+                showPath = e.target.checked;
+                if (showPath) computeSolution();
+                else pathSolution = [];
+            });
+
+            // 暴露给按钮
+            window.newMaze = newMaze;
+            window.resetPlayer = resetPlayer;
+
+            // 启动
+            generateMaze();
+            startTimer();
+            startLoop();
+        })();
+    </script>
+</body>
+</html>

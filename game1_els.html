@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>俄罗斯方块 - HTML5（可调速）</title>
+    <style>
+        :root {
+            --bg: #1a1a2e;
+            --grid-bg: #16213e;
+            --text: #e0e0e0;
+            --accent: #e94560;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+            overflow: hidden;
+        }
+
+        .game-wrapper {
+            display: flex;
+            gap: 30px;
+            align-items: flex-start;
+            padding: 20px;
+        }
+
+        canvas#gameCanvas {
+            border: 2px solid #0f3460;
+            border-radius: 8px;
+            box-shadow: 0 0 20px rgba(233, 69, 96, 0.3);
+            background: var(--grid-bg);
+        }
+
+        .info-panel {
+            background: #16213e;
+            padding: 20px;
+            border-radius: 12px;
+            color: var(--text);
+            min-width: 180px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .info-panel h3 {
+            font-size: 18px;
+            border-bottom: 2px solid var(--accent);
+            padding-bottom: 8px;
+            margin-bottom: 5px;
+        }
+
+        .preview-box {
+            background: #0f3460;
+            padding: 10px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .preview-box canvas {
+            margin: 5px auto 0;
+            border: none;
+            box-shadow: none;
+        }
+
+        .stats {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            font-size: 16px;
+        }
+
+        .stat-value {
+            color: var(--accent);
+            font-weight: bold;
+        }
+
+        .speed-control {
+            margin-top: 5px;
+        }
+
+        .speed-control label {
+            display: block;
+            font-size: 14px;
+            margin-bottom: 5px;
+            color: #ccc;
+        }
+
+        .speed-control input[type=range] {
+            width: 100%;
+            accent-color: var(--accent);
+        }
+
+        .speed-value {
+            font-size: 13px;
+            color: #aaa;
+            text-align: right;
+            margin-top: 2px;
+        }
+
+        .controls-hint {
+            margin-top: auto;
+            font-size: 14px;
+            color: #aaa;
+            line-height: 1.6;
+        }
+
+        .controls-hint span {
+            color: #e94560;
+        }
+
+        .btn {
+            background: #e94560;
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.2s;
+            margin-top: 5px;
+        }
+
+        .btn:hover {
+            background: #ff6b81;
+        }
+
+        @media (max-width: 700px) {
+            .game-wrapper {
+                flex-direction: column;
+                align-items: center;
+                gap: 15px;
+            }
+            .info-panel {
+                flex-direction: row;
+                flex-wrap: wrap;
+                justify-content: center;
+                gap: 10px;
+                width: 100%;
+                max-width: 400px;
+            }
+            .info-panel > * {
+                flex: 1 1 auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="game-wrapper">
+        <canvas id="gameCanvas" width="300" height="600"></canvas>
+        <div class="info-panel">
+            <h3>下一个</h3>
+            <div class="preview-box">
+                <canvas id="previewCanvas" width="120" height="90"></canvas>
+            </div>
+            <div class="stats">
+                <div class="stat-item"><span>分数</span><span class="stat-value" id="scoreDisplay">0</span></div>
+                <div class="stat-item"><span>等级</span><span class="stat-value" id="levelDisplay">1</span></div>
+                <div class="stat-item"><span>行数</span><span class="stat-value" id="linesDisplay">0</span></div>
+            </div>
+            <div class="speed-control">
+                <label for="speedSlider">下落速度</label>
+                <input type="range" id="speedSlider" min="100" max="2000" value="1000" step="50">
+                <div class="speed-value" id="speedValue">1000 ms</div>
+            </div>
+            <div class="controls-hint">
+                <span>← →</span> 移动<br>
+                <span>↑</span> 旋转<br>
+                <span>↓</span> 软降<br>
+                <span>空格</span> 硬降<br>
+                <span>P</span> 暂停<br>
+                <span>R</span> 重置
+            </div>
+            <button class="btn" onclick="togglePause()">暂停 / 继续</button>
+            <button class="btn" onclick="resetGame()">重新开始</button>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            // ---------- DOM 元素 ----------
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+            const previewCanvas = document.getElementById('previewCanvas');
+            const previewCtx = previewCanvas.getContext('2d');
+
+            const scoreDisplay = document.getElementById('scoreDisplay');
+            const levelDisplay = document.getElementById('levelDisplay');
+            const linesDisplay = document.getElementById('linesDisplay');
+            const speedSlider = document.getElementById('speedSlider');
+            const speedValue = document.getElementById('speedValue');
+
+            // ---------- 常量 ----------
+            const COLS = 10;
+            const ROWS = 20;
+            const CELL = 30;
+            const COLORS = {
+                I: '#00ffff',
+                O: '#ffff00',
+                T: '#a000a0',
+                S: '#00ff00',
+                Z: '#ff0000',
+                J: '#0000ff',
+                L: '#ffa500',
+            };
+
+            const SHAPES = {
+                I: [
+                    [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
+                    [[0,0,1,0],[0,0,1,0],[0,0,1,0],[0,0,1,0]]
+                ],
+                O: [
+                    [[1,1],[1,1]]
+                ],
+                T: [
+                    [[0,1,0],[1,1,1],[0,0,0]],
+                    [[0,1,0],[0,1,1],[0,1,0]],
+                    [[0,0,0],[1,1,1],[0,1,0]],
+                    [[0,1,0],[1,1,0],[0,1,0]]
+                ],
+                S: [
+                    [[0,1,1],[1,1,0],[0,0,0]],
+                    [[0,1,0],[0,1,1],[0,0,1]]
+                ],
+                Z: [
+                    [[1,1,0],[0,1,1],[0,0,0]],
+                    [[0,0,1],[0,1,1],[0,1,0]]
+                ],
+                J: [
+                    [[1,0,0],[1,1,1],[0,0,0]],
+                    [[0,1,1],[0,1,0],[0,1,0]],
+                    [[0,0,0],[1,1,1],[0,0,1]],
+                    [[0,1,0],[0,1,0],[1,1,0]]
+                ],
+                L: [
+                    [[0,0,1],[1,1,1],[0,0,0]],
+                    [[0,1,0],[0,1,0],[0,1,1]],
+                    [[0,0,0],[1,1,1],[1,0,0]],
+                    [[1,1,0],[0,1,0],[0,1,0]]
+                ]
+            };
+
+            // ---------- 音效 ----------
+            let audioCtx = null;
+            function initAudio() {
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+            }
+
+            function playBeep(freq, duration, vol = 0.08) {
+                if (!audioCtx) return;
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + duration);
+            }
+
+            const sound = {
+                move: () => playBeep(200, 0.05, 0.05),
+                rotate: () => playBeep(440, 0.06, 0.08),
+                drop: () => playBeep(150, 0.1, 0.08),
+                clear: () => {
+                    playBeep(600, 0.15, 0.1);
+                    setTimeout(() => playBeep(800, 0.1, 0.08), 80);
+                },
+                gameOver: () => {
+                    playBeep(100, 0.4, 0.15);
+                    setTimeout(() => playBeep(80, 0.5, 0.12), 200);
+                }
+            };
+
+            // ---------- 游戏状态 ----------
+            let grid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+            let currentPiece = null;
+            let nextPiece = null;
+            let score = 0;
+            let lines = 0;
+            let level = 1;
+            let baseFallSpeed = 1000;   // 滑杆控制的基础速度
+            let currentFallSpeed = 1000; // 实际下落速度 (会受到等级微调影响)
+            let gameOver = false;
+            let paused = false;
+            let lastFallTime = 0;
+            let animationId = null;
+
+            // ---------- 滑杆事件 ----------
+            speedSlider.addEventListener('input', () => {
+                baseFallSpeed = parseInt(speedSlider.value);
+                updateFallSpeed();
+                speedValue.textContent = baseFallSpeed + ' ms';
+            });
+
+            function updateFallSpeed() {
+                // 等级越高越快，但不会低于 100ms
+                currentFallSpeed = Math.max(100, baseFallSpeed - (level - 1) * 80);
+            }
+
+            // ---------- 游戏逻辑 ----------
+            function randomPiece() {
+                const names = Object.keys(SHAPES);
+                const name = names[Math.floor(Math.random() * names.length)];
+                const rotations = SHAPES[name];
+                const shape = rotations[0];
+                return {
+                    name,
+                    shape,
+                    rotation: 0,
+                    x: Math.floor((COLS - shape[0].length) / 2),
+                    y: 0,
+                    color: COLORS[name]
+                };
+            }
+
+            function rotateShape(piece, direction = 1) {
+                const variants = SHAPES[piece.name];
+                const newRotation = (piece.rotation + direction + variants.length) % variants.length;
+                return variants[newRotation];
+            }
+
+            function isValid(shape, x, y) {
+                for (let r = 0; r < shape.length; r++) {
+                    for (let c = 0; c < shape[0].length; c++) {
+                        if (shape[r][c]) {
+                            const newX = x + c;
+                            const newY = y + r;
+                            if (newX < 0 || newX >= COLS || newY >= ROWS) return false;
+                            if (newY >= 0 && grid[newY][newX] !== null) return false;
+                        }
+                    }
+                }
+                return true;
+            }
+
+            function lockPiece() {
+                const { shape, x, y, color } = currentPiece;
+                for (let r = 0; r < shape.length; r++) {
+                    for (let c = 0; c < shape[0].length; c++) {
+                        if (shape[r][c]) {
+                            const gridY = y + r;
+                            if (gridY >= 0) {
+                                grid[gridY][x + c] = color;
+                            }
+                        }
+                    }
+                }
+
+                let linesCleared = 0;
+                for (let row = ROWS - 1; row >= 0; row--) {
+                    if (grid[row].every(cell => cell !== null)) {
+                        grid.splice(row, 1);
+                        grid.unshift(Array(COLS).fill(null));
+                        linesCleared++;
+                        row++;
+                    }
+                }
+
+                if (linesCleared > 0) {
+                    const points = [0, 100, 300, 500, 800];
+                    score += (points[linesCleared] || 800) * level;
+                    lines += linesCleared;
+                    level = Math.floor(lines / 10) + 1;
+                    updateFallSpeed();
+                    sound.clear();
+                } else {
+                    sound.drop();
+                }
+
+                currentPiece = nextPiece;
+                nextPiece = randomPiece();
+
+                if (!isValid(currentPiece.shape, currentPiece.x, currentPiece.y)) {
+                    gameOver = true;
+                    sound.gameOver();
+                    cancelAnimationFrame(animationId);
+                }
+                updateStats();
+            }
+
+            function move(dx, dy) {
+                if (gameOver || paused) return false;
+                if (isValid(currentPiece.shape, currentPiece.x + dx, currentPiece.y + dy)) {
+                    currentPiece.x += dx;
+                    currentPiece.y += dy;
+                    if (dx !== 0) sound.move();
+                    return true;
+                }
+                return false;
+            }
+
+            function rotate(direction = 1) {
+                if (gameOver || paused) return;
+                const newShape = rotateShape(currentPiece, direction);
+                if (isValid(newShape, currentPiece.x, currentPiece.y)) {
+                    currentPiece.shape = newShape;
+                    currentPiece.rotation = (currentPiece.rotation + direction + SHAPES[currentPiece.name].length) % SHAPES[currentPiece.name].length;
+                    sound.rotate();
+                    return;
+                }
+                for (let offset of [-1, 1, -2, 2]) {
+                    if (isValid(newShape, currentPiece.x + offset, currentPiece.y)) {
+                        currentPiece.x += offset;
+                        currentPiece.shape = newShape;
+                        currentPiece.rotation = (currentPiece.rotation + direction + SHAPES[currentPiece.name].length) % SHAPES[currentPiece.name].length;
+                        sound.rotate();
+                        return;
+                    }
+                }
+            }
+
+            function hardDrop() {
+                if (gameOver || paused) return;
+                while (move(0, 1)) {}
+                lockPiece();
+            }
+
+            function updateStats() {
+                scoreDisplay.textContent = score;
+                levelDisplay.textContent = level;
+                linesDisplay.textContent = lines;
+            }
+
+            function resetGame() {
+                grid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+                currentPiece = randomPiece();
+                nextPiece = randomPiece();
+                score = 0;
+                lines = 0;
+                level = 1;
+                baseFallSpeed = parseInt(speedSlider.value); // 保持当前滑杆值
+                updateFallSpeed();
+                gameOver = false;
+                paused = false;
+                lastFallTime = performance.now();
+                updateStats();
+                speedValue.textContent = baseFallSpeed + ' ms';
+                if (animationId) cancelAnimationFrame(animationId);
+                gameLoop(performance.now());
+            }
+
+            function togglePause() {
+                initAudio();
+                if (gameOver) return;
+                paused = !paused;
+                if (!paused) {
+                    lastFallTime = performance.now();
+                }
+            }
+
+            // ---------- 绘制 ----------
+            function drawGrid() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#16213e';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                for (let row = 0; row < ROWS; row++) {
+                    for (let col = 0; col < COLS; col++) {
+                        const color = grid[row][col];
+                        const x = col * CELL;
+                        const y = row * CELL;
+                        ctx.fillStyle = color || '#0f3460';
+                        ctx.fillRect(x, y, CELL - 1, CELL - 1);
+                        if (color) {
+                            ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                            ctx.fillRect(x, y, CELL - 1, 5);
+                        }
+                    }
+                }
+
+                if (currentPiece && !gameOver) {
+                    const { shape, x: px, y: py, color } = currentPiece;
+                    for (let r = 0; r < shape.length; r++) {
+                        for (let c = 0; c < shape[0].length; c++) {
+                            if (shape[r][c]) {
+                                const x = (px + c) * CELL;
+                                const y = (py + r) * CELL;
+                                ctx.fillStyle = color;
+                                ctx.fillRect(x, y, CELL - 1, CELL - 1);
+                                ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                                ctx.fillRect(x, y, CELL - 1, 5);
+                            }
+                        }
+                    }
+                }
+
+                ctx.strokeStyle = '#0f3460';
+                ctx.lineWidth = 1;
+                for (let i = 0; i <= COLS; i++) {
+                    ctx.beginPath();
+                    ctx.moveTo(i * CELL, 0);
+                    ctx.lineTo(i * CELL, canvas.height);
+                    ctx.stroke();
+                }
+                for (let i = 0; i <= ROWS; i++) {
+                    ctx.beginPath();
+                    ctx.moveTo(0, i * CELL);
+                    ctx.lineTo(canvas.width, i * CELL);
+                    ctx.stroke();
+                }
+
+                if (gameOver) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillStyle = '#e94560';
+                    ctx.font = 'bold 36px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('游戏结束', canvas.width/2, canvas.height/2 - 20);
+                    ctx.font = '18px Arial';
+                    ctx.fillStyle = '#fff';
+                    ctx.fillText('按 R 重新开始', canvas.width/2, canvas.height/2 + 40);
+                } else if (paused) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 36px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('暂停', canvas.width/2, canvas.height/2);
+                }
+            }
+
+            function drawPreview() {
+                const pCtx = previewCtx;
+                pCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+                if (!nextPiece) return;
+                const shape = nextPiece.shape;
+                const color = nextPiece.color;
+                const pCell = 25;
+                const offsetX = (previewCanvas.width - shape[0].length * pCell) / 2;
+                const offsetY = (previewCanvas.height - shape.length * pCell) / 2;
+
+                for (let r = 0; r < shape.length; r++) {
+                    for (let c = 0; c < shape[0].length; c++) {
+                        if (shape[r][c]) {
+                            pCtx.fillStyle = color;
+                            pCtx.fillRect(offsetX + c * pCell, offsetY + r * pCell, pCell - 2, pCell - 2);
+                        }
+                    }
+                }
+            }
+
+            function gameLoop(timestamp) {
+                animationId = requestAnimationFrame(gameLoop);
+                if (!gameOver && !paused) {
+                    if (timestamp - lastFallTime >= currentFallSpeed) {
+                        lastFallTime = timestamp;
+                        if (!move(0, 1)) {
+                            lockPiece();
+                        }
+                    }
+                }
+                drawGrid();
+                drawPreview();
+                updateStats();
+            }
+
+            // ---------- 键盘控制 ----------
+            document.addEventListener('keydown', (e) => {
+                // 防止在滑杆操作时触发游戏按键
+                if (e.target === speedSlider) return;
+                initAudio();
+                if (e.key === 'r' || e.key === 'R') {
+                    e.preventDefault();
+                    resetGame();
+                    return;
+                }
+                if (gameOver) return;
+                if (e.key === 'p' || e.key === 'P') {
+                    e.preventDefault();
+                    togglePause();
+                    return;
+                }
+                if (paused) return;
+
+                switch (e.key) {
+                    case 'ArrowLeft':
+                        e.preventDefault();
+                        move(-1, 0);
+                        break;
+                    case 'ArrowRight':
+                        e.preventDefault();
+                        move(1, 0);
+                        break;
+                    case 'ArrowDown':
+                        e.preventDefault();
+                        move(0, 1);
+                        break;
+                    case 'ArrowUp':
+                        e.preventDefault();
+                        rotate(1);
+                        break;
+                    case ' ':
+                        e.preventDefault();
+                        hardDrop();
+                        break;
+                }
+            });
+
+            // 暴露函数给按钮
+            window.togglePause = togglePause;
+            window.resetGame = resetGame;
+
+            // 启动游戏
+            resetGame();
+        })();
+    </script>
+</body>
+</html>
