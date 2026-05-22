@@ -20,14 +20,14 @@ jobs:
         uses: sayyid5416/pyinstaller@v1.8.0
         with:
           # 你的入口 .py 文件 或 .spec 文件 (必填，除非使用了默认值)
-          spec: "main.py"
+          spec: ".github/workflows/main.py"
           
           # 依赖文件路径 (可选，默认为空)
-          requirements: "requirements.txt"
+          requirements: ".github/workflows/requirements.txt"
           
           # PyInstaller 选项，多个选项用逗号+空格分隔
           # 常用: --onefile (单文件), --windowed (无控制台), --console (带控制台), --name=APPNAME
-          options: "--onefile, --console"
+          options: "--onefile"
           
           # 仅当 spec 为 .spec 文件时可用，用于给 spec 传额外参数 (可选)
           # spec_options: "--debug"
