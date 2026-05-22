@@ -1,0 +1,57 @@
+name: Build EXE with PyInstaller
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:   # 允许手动触发
+
+jobs:
+  build:
+    runs-on: windows-latest   # 如需生成 Windows 可执行文件，推荐用 windows-latest
+    # 如果是 Linux/macOS 程序，可改为 ubuntu-latest / macos-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 使用 PyInstaller 打包
+        uses: sayyid5416/pyinstaller@v1.8.0
+        with:
+          # 你的入口 .py 文件 或 .spec 文件 (必填，除非使用了默认值)
+          spec: "main.py"
+          
+          # 依赖文件路径 (可选，默认为空)
+          requirements: "requirements.txt"
+          
+          # PyInstaller 选项，多个选项用逗号+空格分隔
+          # 常用: --onefile (单文件), --windowed (无控制台), --console (带控制台), --name=APPNAME
+          options: "--onefile, --console"
+          
+          # 仅当 spec 为 .spec 文件时可用，用于给 spec 传额外参数 (可选)
+          # spec_options: "--debug"
+          
+          # Python 版本 (可选，默认 3.10)
+          python_ver: "3.10"
+          
+          # Python 架构，可选 x64 或 x86 (默认 x64)
+          python_arch: "x64"
+          
+          # PyInstaller 版本 (可选，默认使用 action 自带的较新版本)
+          # pyinstaller_ver: "5.13.0"
+          
+          # 生成的可执行文件所在目录 (可选，默认 ./dist)
+          # exe_path: "./dist"
+          
+          # 上传构件时的名称，设置后才会将 exe 作为 artifact 上传 (强烈建议设置)
+          upload_exe_with_name: "MyApplication"
+          
+          # 是否执行干净检出，删除本地未跟踪文件 (可选，默认 true)
+          # clean_checkout: true
+          
+          # 是否下载 Git LFS 文件 (可选)
+          # lfs: false
+          
+          # 构件压缩级别 0-9 (可选，默认 6)
+          compression_level: "6"
