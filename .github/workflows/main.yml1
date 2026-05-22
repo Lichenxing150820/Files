@@ -1,0 +1,44 @@
+name: Build Executable with PyInstaller
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:   # 允许手动触发
+
+jobs:
+  build:
+    runs-on: windows-latest   # 如果目标平台是 Windows，使用 windows-latest
+    # 若需打包 macOS/Linux 可分别添加 job，但需要修改 spec 文件或选项
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'   # 与下方 python_ver 保持一致
+
+      - name: Install dependencies (optional)
+        run: |
+          python -m pip install --upgrade pip
+          if (Test-Path requirements.txt) { pip install -r requirements.txt }
+
+      - name: PyInstaller Action
+        uses: Martin005/pyinstaller-action@v1.2.0
+        with:
+          spec: your_script.py           # 替换为你的主入口脚本名称
+          requirements: requirements.txt # 可选，如果已在上一部安装，此步可省略，但保留也无妨
+          options: --onefile --noconsole # --onefile 生成单个 exe，--noconsole 隐藏控制台窗口（适合 GUI 应用）
+          python_ver: 3.10
+          python_arch: x64
+          exe_path: ./dist
+          upload_exe_with_name: my_app   # 上传的构件名称，会打包为 my_app.zip
+
+      - name: Upload artifact (optional)
+        uses: actions/upload-artifact@v4   # 关键修改：v3 → v4
+        with:
+          name: packaged-executable
+          path: ./dist
