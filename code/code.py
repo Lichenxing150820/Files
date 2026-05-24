@@ -1,5 +1,9 @@
 import time
+import pyttsx3
 
+engine = pyttsx3.init()
+engine.setProperty('rate', 200)
+engine.setProperty('volume', 1.0)
 
 
 a="""
@@ -31,6 +35,8 @@ a="""
 
 好嘞好嘞，我等你们啊，咱不见不散
 """
+#engine.say(a)
+#engine.runAndWait()
 time1=0.2
 
 for i in a:
